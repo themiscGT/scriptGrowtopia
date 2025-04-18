@@ -1,0 +1,334 @@
+local state = {
+    isRunning = true,
+    stats = {
+        total = 0,
+        done = 0,
+        nuked = 0,
+        wrongId = 0,
+        skipped = 0
+    },
+    currentWorld = "",
+    worldsProcessed = {}
+}
+
+-- =============================================
+-- Utility Functions
+-- =============================================
+
+function log(message)
+    local timestamp = os.date("%H:%M:%S")
+    print("["..timestamp.."] ["..getBot().name.."]: "..message)
+    return true
+end
+
+function safeReadFile(path)
+    local file = io.open(path, "r")
+    if not file then
+        log("❌ File not found: "..path)
+        return nil
+    end
+    local content = file:read("*a")
+    file:close()
+    return content
+end
+
+function safeWriteFile(path, content)
+    local file = io.open(path, "w")
+    if not file then
+        log("❌ Failed to write file: "..path)
+        return false
+    end
+    file:write(content)
+    file:close()
+    return true
+end
+
+function countSeeds()
+    local count = 0
+    for _, tile in pairs(getTiles()) do
+        if tonumber(tile.fg) % 2 == 1 then
+            count = count + 1
+        end
+    end
+    return count
+end
+
+function hasPlayers()
+    if not config.checkForPlayers then return false end
+    for _, player in pairs(getPlayers()) do
+        if player.name ~= getBot().name then
+            return true
+        end
+    end
+    return false
+end
+
+-- =============================================
+-- Core Functions
+-- =============================================
+
+function loadWorldList()
+    local content = safeReadFile(config.worldListPath)
+    if not content then return nil end
+    
+    local worlds = {}
+    for line in content:gmatch("[^\r\n]+") do
+        local world, id = line:match("^([^|]+)|([^|]*)")
+        if world then
+            table.insert(worlds, {
+                name = world:upper():gsub("%s+", ""),
+                id = id and id:upper():gsub("%s+", "") or ""
+            })
+        end
+    end
+    
+    if #worlds == 0 then
+        log("❌ No valid worlds found in the list")
+        return nil
+    end
+    
+    log(string.format("📋 Loaded %d worlds from list", #worlds))
+    return worlds
+end
+
+function warpToWorld(world, doorId)
+    local attempts = 0
+    local success = false
+    local isWrongDoor = false
+    
+    while attempts < config.maxWarpAttempts and not success and state.isRunning do
+        attempts = attempts + 1
+        
+        -- Check if we need to reconnect
+        if getBot().status ~= BotStatus.online then
+            log("🔌 Bot offline, reconnecting...")
+            getBot().auto_reconnect = true
+            sleep(5000)
+        end
+        
+        -- Perform the warp
+        if doorId and doorId ~= "" then
+            getBot():warp(world, doorId)
+        else
+            getBot():warp(world)
+        end
+        
+        -- Wait for warp to complete
+        local startTime = os.time()
+        while os.time() - startTime < (config.delayWarp/1000) and state.isRunning do
+            if getBot():isInWorld(world) then
+                -- Check if we spawned in a door
+                if getTile(getBot().x, getBot().y).fg == 6 then
+                    if attempts >= 3 then
+                        isWrongDoor = true
+                        log("🚪 Wrong door ID detected")
+                        break
+                    end
+                else
+                    success = true
+                    break
+                end
+            end
+            sleep(500)
+        end
+        
+        -- Check for nuked world
+        if not getBot():isInWorld(world) and attempts == config.maxWarpAttempts then
+            log("💣 World appears to be nuked")
+            state.stats.nuked = state.stats.nuked + 1
+            return false, true
+        end
+        
+        if hasPlayers() then
+            log("👥 Players detected, skipping world")
+            state.stats.skipped = state.stats.skipped + 1
+            return false, false
+        end
+    end
+    
+    if isWrongDoor then
+        state.stats.wrongId = state.stats.wrongId + 1
+    end
+    
+    return success, isWrongDoor
+end
+
+function changeDoorId()
+    local x, y = getBot().x, getBot().y
+    local attempts = 0
+    local success = false
+    
+    -- Check if there's actually a door here
+    if config.skipIfNoDoor and getTile(x, y).fg ~= 6 then
+        log("🚫 No door found at current position")
+        return false
+    end
+    
+    while attempts < 3 and not success and state.isRunning do
+        attempts = attempts + 1
+        
+        -- Open door edit dialog
+        getBot():wrench(x, y)
+        sleep(config.wrenchDelay)
+        
+        -- Check for dialog
+        local dialogFound = false
+        for _, variant in pairs(getEvents()) do
+            if variant:get(0):getString() == "OnDialogRequest" and
+               variant:get(1):getString():lower():find("edit") then
+                dialogFound = true
+                break
+            end
+        end
+        
+        if dialogFound then
+            -- Send door edit packet
+            local packet = string.format(
+                "action|dialog_return\ndialog_name|door_edit\ndoor_name|%s\ndoor_target|\ndoor_id|%s\ncheckbox_locked|1\ntilex|%d|\ntiley|%d|",
+                "The Misc",
+                config.newDoorID,
+                x,
+                y
+            )
+            
+            success = getBot():sendPacket(2, packet)
+            sleep(config.wrenchDelay)
+            
+            if success then
+                log(string.format("✅ Successfully changed door ID to %s", config.newDoorID))
+                state.stats.done = state.stats.done + 1
+            else
+                log("❌ Failed to send door edit packet")
+            end
+        else
+            log("🗨️ Door edit dialog not found")
+        end
+    end
+    
+    return success
+end
+
+function sendWebhookUpdate()
+    if not config.useWebhook then return end
+    
+    local embed = {
+        title = "<:arrow:1299670877583048795> https://discord.gg/nWwHDzRARF",
+        color = 0x7338A0,
+        fields = {
+            {
+                name = "Information",
+                value = string.format(
+                    "<:kk_ifyes:1175697092224749680> Done : %d\n<:gtNuke:691300583407353907> Nuked : %d\n<:wrong:1209967280381763674> Wrong ID : %d\n<:wrong:1209967280381763674> Skipped : %d\n<:Pepper:1184607292948234290> Total : %d",
+                    state.stats.done,
+                    state.stats.nuked,
+                    state.stats.wrongId,
+                    state.stats.skipped,
+                    state.stats.total
+                ),
+                inline = true
+            },
+            {
+                name = "Bot Info",
+                value = string.format("Name : %s\nWorld : %s\nLevel : %d", getBot().name, state.currentWorld or "None", getBot().level),
+                inline = true
+            }
+        },
+        thumbnail = {url = "https://img.freepik.com/free-vector/isometric-pixel-art-summer-camping-scene_52683-85509.jpg?t=st=1744943997~exp=1744947597~hmac=98bd6fe48f63489e774352c357a3660528edba960b75057ac468fbbcd288bb65&w=826"},
+        footer = {text = "Date : "..os.date("%Y-%m-%d %H:%M:%S")}
+    }
+    
+    -- Add processed worlds list if not too long
+    if #state.worldsProcessed > 0 and #state.worldsProcessed <= 10 then
+        local worldsText = ""
+        for _, world in ipairs(state.worldsProcessed) do
+            worldsText = worldsText .. string.format("- %s (%s)\n", world.name, world.status)
+        end
+        table.insert(embed.fields, {
+            name = "<:WorldList:1156644357135409262> Processed Worlds",
+            value = worldsText,
+            inline = false
+        })
+    end
+    
+    -- Send via webhook
+    local webhook = Webhook.new(config.webhookUrl)
+    webhook.embed1.use = true
+    webhook.embed1.title = embed.title
+    webhook.embed1.color = embed.color
+    webhook.embed1.thumbnail = embed.thumbnail.url
+    
+    for _, field in ipairs(embed.fields) do
+        webhook.embed1:addField(field.name, field.value, field.inline or false)
+    end
+    
+    webhook.embed1.footer.text = embed.footer.text
+    webhook:send()
+end
+
+-- =============================================
+-- Main Execution
+-- =============================================
+
+function main()
+    log("🚀 Starting Door ID Changer Script")
+    
+    -- Load world list
+    local worlds = loadWorldList()
+    if not worlds then return end
+    
+    -- Set initial stats
+    state.stats.total = #worlds
+    
+    -- Process each world
+    for _, world in ipairs(worlds) do
+        if not state.isRunning then break end
+        
+        state.currentWorld = world.name
+        log(string.format("🌐 Processing world: %s (ID: %s)", world.name, world.id))
+        
+        -- Warp to world
+        local warpSuccess, isNuked = warpToWorld(world.name, world.id)
+        
+        if not warpSuccess then
+            table.insert(state.worldsProcessed, {
+                name = world.name,
+                status = isNuked and "NUKED" or "SKIPPED"
+            })
+            sendWebhookUpdate()
+            goto continue
+        end
+        
+        -- Change door ID
+        local changeSuccess = changeDoorId()
+        
+        -- Record result
+        table.insert(state.worldsProcessed, {
+            name = world.name,
+            status = changeSuccess and "DONE" or "FAILED"
+        })
+        
+        -- Update webhook
+        sendWebhookUpdate()
+        
+        ::continue::
+    end
+    
+    -- Final report
+    log(string.format(
+        "🏁 Script completed!\nResults: %d done, %d nuked, %d wrong ID, %d skipped",
+        state.stats.done,
+        state.stats.nuked,
+        state.stats.wrongId,
+        state.stats.skipped
+    ))
+    
+    -- Save final results
+    local resultText = ""
+    for _, world in ipairs(state.worldsProcessed) do
+        resultText = resultText .. string.format("%s|%s\n", world.name, world.status)
+    end
+    safeWriteFile(config.resultPath, resultText)
+end
+
+-- Start the script
+main()
