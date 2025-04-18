@@ -38,12 +38,12 @@ function safeWriteFile(path, content)
 end
 function countSeeds()
     local count = 0
-    for _, tile in pairs(getTiles()) do
-        if tonumber(tile.fg) % 2 == 4585 then
-            count = count + 1
-        end
-    end
-    return count
+    for _, tile in pairs(getBot():getWorld():getTiles()) do 
+        if tile.fg == 4585 and getBot():getWorld():hasAccess(tile.x, tile.y) > 0 then 
+            count = count + 1 
+        end 
+    end 
+    return count 
 end
 function hasPlayers()
     if not config.checkForPlayers then return false end
