@@ -39,7 +39,7 @@ end
 function countSeeds()
     local count = 0
     for _, tile in pairs(getTiles()) do
-        if tonumber(tile.fg) % 2 == 1 then
+        if tonumber(tile.fg) % 2 == 4585 then
             count = count + 1
         end
     end
