@@ -38,7 +38,7 @@ end
 function countSeeds()
     local count = 0
     for _, tile in pairs(getBot():getWorld():getTiles()) do 
-        if tile.fg == 4585 and getBot():getWorld():hasAccess(tile.x, tile.y) > 0 then 
+        if tile.fg == config.seedId and getBot():getWorld():hasAccess(tile.x, tile.y) > 0 then 
             count = count + 1 
         end 
     end 
