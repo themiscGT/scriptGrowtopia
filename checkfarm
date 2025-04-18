@@ -110,17 +110,21 @@ function warpToWorld(world, doorId)
     end
     return success, isWrongDoor
 end
-local a=0;function sendWebhookUpdate()if not config.useWebhook then return end;local b={title="<:arrow:1299670877583048795> https://discord.gg/nWwHDzRARF",color=0x7338A0,fields={{name="Information",value=string.format("<:kk_ifyes:1175697092224749680> Done : %d\n<:gtNuke:691300583407353907> Nuked : %d\n<:wrong:1209967280381763674> Wrong ID : %d\n<:wrong:1209967280381763674> Skipped : %d\n<:Pepper:1184607292948234290> Total : %d",state.stats.done,state.stats.nuked,state.stats.wrongId,state.stats.skipped,state.stats.total),inline=true},{name="Bot Info",value=string.format("Name : %s\nWorld : %s\nLevel : %d",getBot().name,state.currentWorld or"None",getBot().level),inline=true}},thumbnail={url="https://img.freepik.com/free-vector/isometric-pixel-art-summer-camping-scene_52683-85509.jpg?t=st=1744943997~exp=1744947597~hmac=98bd6fe48f63489e774352c357a3660528edba960b75057ac468fbbcd288bb65&w=826"},footer={text="Date : "..os.date("%Y-%m-%d %H:%M:%S")}}if#state.worldsProcessed>0 and#state.worldsProcessed<=10 then local c=""for d,e in ipairs(state.worldsProcessed)do c=c..string.format("- %s (%s)(%d)\n",e.name,countSeeds(),countBlock())end;table.insert(b.fields,{name="<:WorldList:1156644357135409262> Processed Worlds",value=c,inline=false})end;local f=Webhook.new(config.webhookUrl)f.embed1.use=true;f.embed1.title=b.title;f.embed1.color=b.color;f.embed1.thumbnail=b.thumbnail.url;for d,g in ipairs(b.fields)do f.embed1:addField(g.name,g.value,g.inline or false)end;f.embed1.footer.text=b.footer.text;if a==0 then f:send()a=wh.message_id else f:edit(a)end end
+local a=0;function sendWebhookUpdate()if not config.useWebhook then return end;local b={title="<:arrow:1299670877583048795> https://discord.gg/nWwHDzRARF",color=0x7338A0,fields={{name="Information",value=string.format("<:kk_ifyes:1175697092224749680> Done : %d\n<:gtNuke:691300583407353907> Nuked : %d\n<:wrong:1209967280381763674> Wrong ID : %d\n<:wrong:1209967280381763674> Skipped : %d\n<:Pepper:1184607292948234290> Total : %d",state.stats.done,state.stats.nuked,state.stats.wrongId,state.stats.skipped,state.stats.total),inline=true},{name="Bot Info",value=string.format("Name : %s\nWorld : %s\nLevel : %d",getBot().name,state.currentWorld or"None",getBot().level),inline=true}},thumbnail={url="https://img.freepik.com/free-vector/isometric-pixel-art-summer-camping-scene_52683-85509.jpg?t=st=1744943997~exp=1744947597~hmac=98bd6fe48f63489e774352c357a3660528edba960b75057ac468fbbcd288bb65&w=826"},footer={text="Date : "..os.date("%Y-%m-%d %H:%M:%S")}}if#state.worldsProcessed>0 and#state.worldsProcessed<=10 then local c=""for d,e in ipairs(state.worldsProcessed)do c=c..string.format("- %s (%s)(%d)\n",e.name,countSeeds(),countBlock())end;table.insert(b.fields,{name="<:WorldList:1156644357135409262> Processed Worlds",value=c,inline=false})end;local f=Webhook.new(config.webhookUrl)f.embed1.use=true;f.embed1.title=b.title;f.embed1.color=b.color;f.embed1.thumbnail=b.thumbnail.url;for d,g in ipairs(b.fields)do f.embed1:addField(g.name,g.value,g.inline or false)end;f.embed1.footer.text=b.footer.text;if a==0 then f:send()a=f.message_id else f:edit(a)end end
 function main()
-    log("🚀 Farm Checeker started")
+    log("🚀 Farm Checker started")
     local worlds = loadWorldList()
     if not worlds then return end
     state.stats.total = #worlds
+    
     for _, world in ipairs(worlds) do
         if not state.isRunning then break end
+        
         state.currentWorld = world.name
         log(string.format("🌐 Processing world: %s (ID: %s)", world.name, world.id))
+        
         local warpSuccess, isNuked = warpToWorld(world.name, world.id)
+        
         if not warpSuccess then
             table.insert(state.worldsProcessed, {
                 name = world.name,
@@ -129,24 +133,39 @@ function main()
             sendWebhookUpdate()
             goto continue
         end
+        
+        -- TAMBAHKAN BAGIAN INI
+        state.stats.done = state.stats.done + 1
         table.insert(state.worldsProcessed, {
             name = world.name,
+            seeds = countSeeds(),
+            blocks = countBlock(),
+            status = "DONE"
         })
-        -- Update webhook
+        
         sendWebhookUpdate()
+        
         ::continue::
     end
+    
+    -- Hasil akhir
     log(string.format(
         "🏁 Script completed!\nResults: %d done, %d nuked, %d wrong ID, %d skipped",
-        state.stats.done,
+        state.stats.done,  -- Sekarang akan menampilkan nilai yang benar
         state.stats.nuked,
         state.stats.wrongId,
         state.stats.skipped
     ))
+    
+    -- Simpan hasil
     local resultText = ""
     for _, world in ipairs(state.worldsProcessed) do
-        resultText = resultText .. string.format("%s|%s\n", world.name, (countSeeds()), (countBlock()))
+        resultText = resultText .. string.format("%s|%d|%d\n", 
+            world.name, 
+            world.seeds or 0, 
+            world.blocks or 0)
     end
     safeWriteFile(config.resultPath, resultText)
 end
+
 main()
